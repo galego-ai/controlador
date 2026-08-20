@@ -5,69 +5,43 @@ import {supabase} from '../../../lib/supabase'
 
 const slugify=(v:string)=>v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')
 const empty={name:'',slug:'',document:'',email:'',phone:'',plan_name:'Profissional',monthly_fee:0,primary_color:'#FFD400',secondary_color:'#111111',logo_url:'',pix_key:'',notes:''}
-
-type Credentials={publicUrl:string;loginUrl:string;panelUrl:string;email:string;temporaryPassword:string}|null
+type Credentials={publicUrl:string;adminUrl:string;email:string;temporaryPassword:string}|null
 
 export default function Locadoras(){
-  const [ok,setOk]=useState<boolean|null>(null)
-  const [list,setList]=useState<any[]>([])
-  const [form,setForm]=useState<any>(empty)
-  const [editing,setEditing]=useState<string|null>(null)
-  const [msg,setMsg]=useState('')
-  const [credentials,setCredentials]=useState<Credentials>(null)
-  const [saving,setSaving]=useState(false)
-
+  const [ok,setOk]=useState<boolean|null>(null),[list,setList]=useState<any[]>([]),[form,setForm]=useState<any>(empty),[editing,setEditing]=useState<string|null>(null),[msg,setMsg]=useState(''),[credentials,setCredentials]=useState<Credentials>(null),[saving,setSaving]=useState(false)
   async function load(){if(!supabase)return;const {data}=await supabase.from('companies').select('*').order('created_at',{ascending:false});setList(data||[])}
-
   useEffect(()=>{(async()=>{if(!supabase){setOk(false);return}const {data:{user}}=await supabase.auth.getUser();if(!user){setOk(false);return}const {data:p}=await supabase.from('profiles').select('is_super_admin').eq('id',user.id).single();const allowed=!!p?.is_super_admin;setOk(allowed);if(allowed)await load()})()},[])
+
+  const publicUrl=(c:any)=>`${location.origin}/l/${c.slug||c.id}`
+  const adminUrl=(c:any)=>`${location.origin}/login?next=${encodeURIComponent('/admin')}&locadora=${encodeURIComponent(c.slug||c.id)}`
+  async function copy(text:string,label:string){await navigator.clipboard.writeText(text);setMsg(label+' copiado.')}
 
   async function save(e:FormEvent){
     e.preventDefault();if(!supabase||saving)return
     setSaving(true);setMsg('');setCredentials(null)
     const slug=form.slug||slugify(form.name)
     const payload={...form,slug,monthly_fee:Number(form.monthly_fee||0),updated_at:new Date().toISOString()}
-
-    if(editing){
-      const {error}=await supabase.from('companies').update(payload).eq('id',editing)
-      setSaving(false)
-      if(error){setMsg(error.message);return}
-      setMsg('Locadora atualizada com sucesso.')
-      setEditing(null);setForm(empty);await load();return
-    }
-
+    if(editing){const {error}=await supabase.from('companies').update(payload).eq('id',editing);setSaving(false);if(error){setMsg(error.message);return}setMsg('Locadora atualizada com sucesso.');setEditing(null);setForm(empty);await load();return}
     if(!form.email){setSaving(false);setMsg('Informe o e-mail do administrador da locadora.');return}
     const {data:company,error}=await supabase.from('companies').insert({...payload,status:'active'}).select('id,name,slug').single()
     if(error||!company){setSaving(false);setMsg(error?.message||'Não foi possível cadastrar a locadora.');return}
-
     const {data:{session}}=await supabase.auth.getSession()
     const res=await fetch('/api/super-admin/locadoras/criar-admin',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session?.access_token||''}`},body:JSON.stringify({companyId:company.id,email:form.email,fullName:form.name})})
-    const result=await res.json()
-    setSaving(false)
+    const result=await res.json();setSaving(false)
     if(!res.ok){setMsg(`Locadora criada, mas o administrador não pôde ser criado: ${result.error||'erro desconhecido'}`);await load();return}
-
-    const publicUrl=`${location.origin}/l/${company.slug||slug}`
-    setCredentials({publicUrl,loginUrl:result.adminUrl||`${location.origin}/login`,panelUrl:result.panelUrl||`${location.origin}/admin`,email:result.email||form.email,temporaryPassword:result.temporaryPassword})
-    setMsg('Locadora e administrador criados com sucesso.')
-    setForm(empty)
-    await load()
+    const tenant={id:company.id,slug:company.slug||slug}
+    setCredentials({publicUrl:publicUrl(tenant),adminUrl:adminUrl(tenant),email:result.email||form.email,temporaryPassword:result.temporaryPassword})
+    setMsg('Locadora e administrador criados com sucesso.');setForm(empty);await load()
   }
 
   function edit(c:any){setCredentials(null);setEditing(c.id);setForm({name:c.name||'',slug:c.slug||'',document:c.document||'',email:c.email||'',phone:c.phone||'',plan_name:c.plan_name||'Profissional',monthly_fee:Number(c.monthly_fee||0),primary_color:c.primary_color||'#FFD400',secondary_color:c.secondary_color||'#111111',logo_url:c.logo_url||'',pix_key:c.pix_key||'',notes:c.notes||''});window.scrollTo({top:0,behavior:'smooth'})}
   async function status(id:string,status:string){if(!supabase)return;const {error}=await supabase.from('companies').update({status,updated_at:new Date().toISOString()}).eq('id',id);setMsg(error?error.message:status==='blocked'?'Locadora bloqueada.':'Locadora ativada.');await load()}
   async function remove(id:string){if(!supabase||!confirm('Excluir esta locadora? Esta ação pode falhar caso existam reservas vinculadas.'))return;const {error}=await supabase.from('companies').delete().eq('id',id);setMsg(error?'Não foi possível excluir. Prefira bloquear a locadora para preservar o histórico.':'Locadora excluída.');await load()}
-  async function copy(text:string,label:string){await navigator.clipboard.writeText(text);setMsg(label+' copiado.')}
-  async function copyLink(c:any){await copy(location.origin+'/l/'+(c.slug||c.id),'Link da locadora')}
 
   if(ok===null)return <main className="container"><div className="card">Carregando...</div></main>
   if(!ok)return <main className="container"><div className="card">Acesso exclusivo do Super Admin.</div></main>
-
-  return <main className="container">
-    <section className="hero"><h1>Super Admin • Locadoras</h1><p>Ao cadastrar uma locadora, o AGENDA-GO também cria automaticamente o administrador dela.</p></section>
-
-    {credentials&&<section className="card section"><h2>✅ Acessos gerados</h2><p>Envie estes dados ao responsável pela locadora. A senha é temporária e deve ser trocada depois.</p><div className="rowItem"><strong>Portal público</strong><span>{credentials.publicUrl}</span><button className="btn secondary" type="button" onClick={()=>copy(credentials.publicUrl,'Portal público')}>Copiar</button></div><div className="rowItem"><strong>Login do administrador</strong><span>{credentials.loginUrl}</span><button className="btn secondary" type="button" onClick={()=>copy(credentials.loginUrl,'Link de login')}>Copiar</button></div><div className="rowItem"><strong>Painel da locadora</strong><span>{credentials.panelUrl}</span><button className="btn secondary" type="button" onClick={()=>copy(credentials.panelUrl,'Link do painel')}>Copiar</button></div><div className="rowItem"><strong>Usuário</strong><span>{credentials.email}</span><button className="btn secondary" type="button" onClick={()=>copy(credentials.email,'Usuário')}>Copiar</button></div><div className="rowItem"><strong>Senha temporária</strong><span>{credentials.temporaryPassword}</span><button className="btn" type="button" onClick={()=>copy(credentials.temporaryPassword,'Senha temporária')}>Copiar senha</button></div></section>}
-
-    <form className="card form" onSubmit={save}><h2>{editing?'Editar locadora':'Nova locadora'}</h2><label>Nome<input required value={form.name} onChange={e=>setForm({...form,name:e.target.value,slug:editing?form.slug:slugify(e.target.value)})}/></label><label>Endereço da locadora<input required value={form.slug} onChange={e=>setForm({...form,slug:slugify(e.target.value)})}/><small>/l/{form.slug||'nome-da-locadora'}</small></label><label>CNPJ/CPF<input value={form.document} onChange={e=>setForm({...form,document:e.target.value})}/></label><label>E-mail {editing?'':'do administrador'}<input required={!editing} type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/>{!editing&&<small>Este e-mail será o usuário para entrar no painel administrativo da locadora.</small>}</label><label>Telefone<input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label><label>Plano<input value={form.plan_name} onChange={e=>setForm({...form,plan_name:e.target.value})}/></label><label>Mensalidade<input type="number" min="0" step="0.01" value={form.monthly_fee} onChange={e=>setForm({...form,monthly_fee:Number(e.target.value)})}/></label><label>Logo (URL)<input value={form.logo_url} onChange={e=>setForm({...form,logo_url:e.target.value})}/></label><div className="cardRow"><label>Cor principal<input type="color" value={form.primary_color} onChange={e=>setForm({...form,primary_color:e.target.value})}/></label><label>Cor secundária<input type="color" value={form.secondary_color} onChange={e=>setForm({...form,secondary_color:e.target.value})}/></label></div><h3>Repasse</h3><label>Chave PIX da locadora<input value={form.pix_key} onChange={e=>setForm({...form,pix_key:e.target.value})} placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"/><small>Chave usada para receber os repasses.</small></label><label>Observações<textarea rows={4} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label><div className="actions"><button className="btn" disabled={saving}>{saving?'Criando...':editing?'Salvar alterações':'Cadastrar locadora + criar administrador'}</button>{editing&&<button type="button" className="btn secondary" onClick={()=>{setEditing(null);setForm(empty)}}>Cancelar</button>}</div>{msg&&<div className="message">{msg}</div>}</form>
-
-    <section className="section card"><h2>Locadoras cadastradas</h2>{list.length===0?<p>Nenhuma locadora cadastrada.</p>:list.map(c=><div className="tenantRow" key={c.id}>{c.logo_url?<img src={c.logo_url} alt={c.name}/>:<div className="tenantLogoFallback">AG</div>}<div className="tenantInfo"><strong>{c.name}</strong><span>{c.document||'Sem documento'} • Plano {c.plan_name||'—'} • {Number(c.monthly_fee||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}/mês</span><span>PIX de repasse: <strong>{c.pix_key?'Configurado':'Não configurado'}</strong></span><span className={c.status==='blocked'?'statusPill danger':'statusPill'}>{c.status==='blocked'?'Bloqueada':'Ativa'}</span><small>{location.origin}/l/{c.slug||c.id}</small></div><div className="actions"><button className="btn" onClick={()=>copyLink(c)}>Copiar portal</button>{c.slug&&<a className="btn secondary" href={'/l/'+c.slug} target="_blank">Abrir portal</a>}<a className="btn secondary" href="/admin" target="_blank">Painel admin</a><button className="btn secondary" onClick={()=>edit(c)}>Editar</button>{c.status==='blocked'?<button className="btn" onClick={()=>status(c.id,'active')}>Ativar</button>:<button className="btn secondary" onClick={()=>status(c.id,'blocked')}>Bloquear</button>}<button className="btn secondary" onClick={()=>remove(c.id)}>Excluir</button></div></div>)}</section>
-  </main>
+  return <main className="container"><section className="hero"><h1>Super Admin • Locadoras</h1><p>Cada locadora recebe dois links separados: um para os clientes e outro para o administrador da locadora.</p></section>
+  {credentials&&<section className="card section"><h2>✅ Acessos gerados</h2><div className="rowItem"><strong>👤 Link do usuário / cliente</strong><span>{credentials.publicUrl}</span><div className="actions"><a className="btn" href={credentials.publicUrl} target="_blank">Abrir</a><button className="btn secondary" onClick={()=>copy(credentials.publicUrl,'Link do usuário')}>Copiar</button></div></div><div className="rowItem"><strong>🔐 Link do administrador da locadora</strong><span>{credentials.adminUrl}</span><div className="actions"><a className="btn" href={credentials.adminUrl} target="_blank">Abrir login</a><button className="btn secondary" onClick={()=>copy(credentials.adminUrl,'Link do administrador')}>Copiar</button></div></div><div className="rowItem"><strong>Usuário do administrador</strong><span>{credentials.email}</span></div><div className="rowItem"><strong>Senha temporária</strong><span>{credentials.temporaryPassword}</span><button className="btn secondary" onClick={()=>copy(credentials.temporaryPassword,'Senha temporária')}>Copiar senha</button></div></section>}
+  <form className="card form" onSubmit={save}><h2>{editing?'Editar locadora':'Nova locadora'}</h2><label>Nome<input required value={form.name} onChange={e=>setForm({...form,name:e.target.value,slug:editing?form.slug:slugify(e.target.value)})}/></label><label>Endereço da locadora<input required value={form.slug} onChange={e=>setForm({...form,slug:slugify(e.target.value)})}/><small>/l/{form.slug||'nome-da-locadora'}</small></label><label>CNPJ/CPF<input value={form.document} onChange={e=>setForm({...form,document:e.target.value})}/></label><label>E-mail {editing?'':'do administrador'}<input required={!editing} type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label>Telefone<input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label><label>Plano<input value={form.plan_name} onChange={e=>setForm({...form,plan_name:e.target.value})}/></label><label>Mensalidade<input type="number" min="0" step="0.01" value={form.monthly_fee} onChange={e=>setForm({...form,monthly_fee:Number(e.target.value)})}/></label><label>Logo (URL)<input value={form.logo_url} onChange={e=>setForm({...form,logo_url:e.target.value})}/></label><div className="cardRow"><label>Cor principal<input type="color" value={form.primary_color} onChange={e=>setForm({...form,primary_color:e.target.value})}/></label><label>Cor secundária<input type="color" value={form.secondary_color} onChange={e=>setForm({...form,secondary_color:e.target.value})}/></label></div><h3>Repasse</h3><label>Chave PIX da locadora<input value={form.pix_key} onChange={e=>setForm({...form,pix_key:e.target.value})} placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"/></label><label>Observações<textarea rows={4} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label><div className="actions"><button className="btn" disabled={saving}>{saving?'Criando...':editing?'Salvar alterações':'Cadastrar locadora + criar administrador'}</button>{editing&&<button type="button" className="btn secondary" onClick={()=>{setEditing(null);setForm(empty)}}>Cancelar</button>}</div>{msg&&<div className="message">{msg}</div>}</form>
+  <section className="section card"><h2>Locadoras cadastradas</h2>{list.length===0?<p>Nenhuma locadora cadastrada.</p>:list.map(c=><div className="tenantRow" key={c.id}>{c.logo_url?<img src={c.logo_url} alt={c.name}/>:<div className="tenantLogoFallback">AG</div>}<div className="tenantInfo"><strong>{c.name}</strong><span>{c.document||'Sem documento'} • Plano {c.plan_name||'—'}</span><span>PIX: <strong>{c.pix_key?'Configurado':'Não configurado'}</strong></span><span className={c.status==='blocked'?'statusPill danger':'statusPill'}>{c.status==='blocked'?'Bloqueada':'Ativa'}</span><small><strong>Usuário:</strong> {publicUrl(c)}</small><small><strong>Administrador:</strong> {adminUrl(c)}</small></div><div className="actions"><button className="btn" onClick={()=>copy(publicUrl(c),'Link do usuário')}>Copiar link usuário</button><button className="btn secondary" onClick={()=>copy(adminUrl(c),'Link do administrador')}>Copiar link admin</button><a className="btn secondary" href={publicUrl(c)} target="_blank">Abrir usuário</a><a className="btn secondary" href={adminUrl(c)} target="_blank">Abrir admin</a><button className="btn secondary" onClick={()=>edit(c)}>Editar</button>{c.status==='blocked'?<button className="btn" onClick={()=>status(c.id,'active')}>Ativar</button>:<button className="btn secondary" onClick={()=>status(c.id,'blocked')}>Bloquear</button>}<button className="btn secondary" onClick={()=>remove(c.id)}>Excluir</button></div></div>)}</section></main>
 }
