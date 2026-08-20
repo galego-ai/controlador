@@ -17,8 +17,13 @@ export default function LoginPage(){
     setLoading(true)
 
     if(mode==='signup'){
-      const {error}=await supabase.auth.signUp({email,password,options:{data:{full_name:name}}})
-      setMessage(error?error.message:'Cadastro realizado. Verifique seu e-mail se a confirmação estiver habilitada.')
+      const emailRedirectTo=`${window.location.origin}/login?email_confirmado=1`
+      const {error}=await supabase.auth.signUp({
+        email,
+        password,
+        options:{data:{full_name:name},emailRedirectTo}
+      })
+      setMessage(error?error.message:'Cadastro realizado. Confirme seu e-mail para voltar ao AGENDA-GO e entrar na sua conta.')
       setLoading(false)
       return
     }
