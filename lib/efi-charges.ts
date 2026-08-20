@@ -1,38 +1,7 @@
 const productionBase='https://cobrancas.api.efipay.com.br'
 const sandboxBase='https://cobrancas-h.api.efipay.com.br'
-
 type Json=Record<string,any>
-
 function baseUrl(){return process.env.EFI_SANDBOX==='true'?sandboxBase:productionBase}
-
-async function requestJson(path:string,method:string,headers:Record<string,string>,body?:Json){
-  const response=await fetch(`${baseUrl()}${path}`,{
-    method,
-    headers:{Accept:'application/json','Content-Type':'application/json',...headers},
-    body:body?JSON.stringify(body):undefined,
-    cache:'no-store'
-  })
-  const text=await response.text()
-  let data:any={}
-  try{data=text?JSON.parse(text):{}}catch{data={raw:text}}
-  if(!response.ok)throw new Error(data?.error_description||data?.message||data?.error||`Efí HTTP ${response.status}`)
-  return data
-}
-
-export async function efiChargesAccessToken(){
-  const clientId=process.env.EFI_CLIENT_ID,clientSecret=process.env.EFI_CLIENT_SECRET
-  if(!clientId||!clientSecret)throw new Error('Credenciais EFI_CLIENT_ID/EFI_CLIENT_SECRET não configuradas.')
-  const basic=Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
-  const data=await requestJson('/v1/authorize','POST',{Authorization:`Basic ${basic}`},{grant_type:'client_credentials'})
-  if(!data.access_token)throw new Error('A Efí não retornou access_token para a API de Cobranças.')
-  return data.access_token as string
-}
-
-export async function createCardCharge(input:{amount:number;paymentToken:string;name:string;cpf:string;email:string;phone:string;installments?:number;description?:string}){
-  const token=await efiChargesAccessToken()
-  const body={
-    items:[{name:input.description||'Reserva AGENDA-GO',value:Math.round(input.amount*100),amount:1}],
-    payment:{credit_card:{customer:{name:input.name,cpf:input.cpf.replace(/\D/g,''),email:input.email,phone_number:input.phone.replace(/\D/g,'')},installments:input.installments||1,payment_token:input.paymentToken}}
-  }
-  return requestJson('/v1/charge/one-step','POST',{Authorization:`Bearer ${token}`},body)
-}
+async function requestJson(path:string,method:string,headers:Record<string,string>,body?:Json){const response=await fetch(`${baseUrl()}${path}`,{method,headers:{Accept:'application/json','Content-Type':'application/json',...headers},body:body?JSON.stringify(body):undefined,cache:'no-store'});const text=await response.text();let data:any={};try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!response.ok)throw new Error(data?.error_description||data?.message||data?.error||`Efí HTTP ${response.status}`);return data}
+export async function efiChargesAccessToken(){const clientId=process.env.EFI_CLIENT_ID,clientSecret=process.env.EFI_CLIENT_SECRET;if(!clientId||!clientSecret)throw new Error('Credenciais EFI_CLIENT_ID/EFI_CLIENT_SECRET não configuradas.');const basic=Buffer.from(`${clientId}:${clientSecret}`).toString('base64');const data=await requestJson('/v1/authorize','POST',{Authorization:`Basic ${basic}`},{grant_type:'client_credentials'});if(!data.access_token)throw new Error('A Efí não retornou access_token para a API de Cobranças.');return data.access_token as string}
+export async function createCardCharge(input:{amount:number;paymentToken:string;name:string;cpf:string;email:string;phone:string;installments?:number;description?:string;companyPayeeCode?:string;companyPercent?:number}){const token=await efiChargesAccessToken();const marketplace=input.companyPayeeCode&&Number(input.companyPercent)>0?{marketplace:{repasses:[{payee_code:input.companyPayeeCode,percentage:Math.round(Math.max(0,Math.min(100,Number(input.companyPercent)))*100)}]}}:{};const body={items:[{name:input.description||'Reserva AGENDA-GO',value:Math.round(input.amount*100),amount:1,...marketplace}],payment:{credit_card:{customer:{name:input.name,cpf:input.cpf.replace(/\D/g,''),email:input.email,phone_number:input.phone.replace(/\D/g,'')},installments:input.installments||1,payment_token:input.paymentToken}}};return requestJson('/v1/charge/one-step','POST',{Authorization:`Bearer ${token}`},body)}
