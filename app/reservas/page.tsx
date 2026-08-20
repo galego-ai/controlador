@@ -1,0 +1,1 @@
+export default function ReservasPage(){return <main className="container"><div className="hero"><h1>Reservas</h1><p>Gerencie as reservas do AGENDA-GO.</p></div><div className="card"><h2>Nenhuma reserva cadastrada</h2><p>O calendário e o cadastro de reservas serão conectados ao Supabase na próxima etapa.</p><a className="btn" href="/">Voltar ao painel</a></div></main>}
