@@ -1,17 +1,5 @@
 import {NextResponse} from 'next/server'
-import {createPixCharge} from '../../../../lib/efi'
-
+import {createPixCharge,createPixSplitConfig,linkPixSplit} from '../../../../lib/efi'
+import {supabaseAdmin} from '../../../../lib/supabase-admin'
 export const runtime='nodejs'
-
-export async function POST(request:Request){
-  try{
-    const body=await request.json()
-    const amount=Number(body?.amount)
-    if(!Number.isFinite(amount)||amount<=0)return NextResponse.json({error:'Valor inválido.'},{status:400})
-    const result=await createPixCharge({amount,name:body?.name,cpf:body?.cpf,description:body?.description||'Reserva AGENDA-GO',expiration:Number(body?.expiration)||1800})
-    return NextResponse.json({txid:result.charge?.txid,status:result.charge?.status,locationId:result.charge?.loc?.id,qrcode:result.qr?.qrcode,imagemQrcode:result.qr?.imagemQrcode,linkVisualizacao:result.qr?.linkVisualizacao})
-  }catch(error:any){
-    console.error('Erro Efí Pix:',error?.message)
-    return NextResponse.json({error:error?.message||'Não foi possível gerar a cobrança Pix.'},{status:500})
-  }
-}
+export async function POST(request:Request){try{const body=await request.json();const reservationId=String(body?.reservationId||'');if(!reservationId)return NextResponse.json({error:'Reserva não informada.'},{status:400});const db=supabaseAdmin();const {data:r,error}=await db.from('reservations').select('id,company_id,payment_total,total,payment_method,payment_status,customer_id,vehicles(name),profiles:customer_id(full_name,cpf),companies:company_id(name,document,efi_account_number,efi_split_enabled)').eq('id',reservationId).single();if(error||!r)return NextResponse.json({error:'Reserva não encontrada.'},{status:404});if(r.payment_method!=='pix')return NextResponse.json({error:'A reserva não está configurada para PIX.'},{status:400});if(r.payment_status==='paid')return NextResponse.json({error:'Esta reserva já está paga.'},{status:409});const {data:fees}=await db.from('platform_fee_settings').select('pix_fee_percent').eq('id',true).single();const platformPercent=Number(fees?.pix_fee_percent||0);const amount=Number(r.payment_total??r.total??0);if(!Number.isFinite(amount)||amount<=0)return NextResponse.json({error:'Valor da reserva inválido.'},{status:400});const profile:any=r.profiles;const vehicle:any=r.vehicles;const company:any=r.companies;const result=await createPixCharge({amount,name:profile?.full_name||'Cliente AGENDA-GO',cpf:profile?.cpf||'',description:`Reserva ${vehicle?.name||''} - ${company?.name||'AGENDA-GO'}`});let splitConfigId:string|null=null;let splitApplied=false;if(company?.efi_split_enabled&&company?.efi_account_number&&company?.document&&platformPercent>=0&&platformPercent<100){const split=await createPixSplitConfig({platformPercent,companyDocument:company.document,companyAccount:company.efi_account_number,description:`Reserva ${reservationId}`});splitConfigId=split?.id||null;if(splitConfigId&&result.charge?.txid){await linkPixSplit(result.charge.txid,splitConfigId);splitApplied=true}}const platformFee=Number((amount*(platformPercent/100)).toFixed(2));const companyNet=Number((amount-platformFee).toFixed(2));await db.from('reservations').update({pix_txid:result.charge?.txid||null,pix_qrcode:result.qr?.qrcode||null,pix_link:result.qr?.linkVisualizacao||null,efi_split_config_id:splitConfigId,platform_fee:platformFee,platform_net:platformFee,company_net:companyNet}).eq('id',reservationId);return NextResponse.json({txid:result.charge?.txid,status:result.charge?.status,qrcode:result.qr?.qrcode,imagemQrcode:result.qr?.imagemQrcode,linkVisualizacao:result.qr?.linkVisualizacao,splitApplied,platformFee,companyNet})}catch(error:any){console.error('Erro Efí Pix:',error?.message);return NextResponse.json({error:error?.message||'Não foi possível gerar a cobrança Pix.'},{status:500})}}
