@@ -1,25 +1,5 @@
 import {NextResponse} from 'next/server'
 import {createCardCharge} from '../../../../lib/efi-charges'
-
+import {supabaseAdmin} from '../../../../lib/supabase-admin'
 export const runtime='nodejs'
-
-export async function POST(request:Request){
-  try{
-    const body=await request.json()
-    const amount=Number(body?.amount)
-    const paymentToken=String(body?.paymentToken||'')
-    const name=String(body?.name||'').trim()
-    const cpf=String(body?.cpf||'').replace(/\D/g,'')
-    const email=String(body?.email||'').trim()
-    const phone=String(body?.phone||'').replace(/\D/g,'')
-    const installments=Math.max(1,Number(body?.installments)||1)
-    if(!Number.isFinite(amount)||amount<=0)return NextResponse.json({error:'Valor inválido.'},{status:400})
-    if(!paymentToken)return NextResponse.json({error:'Token do cartão não informado.'},{status:400})
-    if(!name||cpf.length!==11||!email||phone.length<10)return NextResponse.json({error:'Complete nome, CPF, e-mail e telefone do pagador.'},{status:400})
-    const result=await createCardCharge({amount,paymentToken,name,cpf,email,phone,installments,description:body?.description||'Reserva AGENDA-GO'})
-    return NextResponse.json({code:result?.code,status:result?.data?.status,chargeId:result?.data?.charge_id,total:result?.data?.total,installments:result?.data?.installments,refusal:result?.data?.refusal||null})
-  }catch(error:any){
-    console.error('Erro Efí Cartão:',error?.message)
-    return NextResponse.json({error:error?.message||'Não foi possível processar o cartão.'},{status:500})
-  }
-}
+export async function POST(request:Request){try{const body=await request.json();const reservationId=String(body?.reservationId||'');const paymentToken=String(body?.paymentToken||'');if(!reservationId||!paymentToken)return NextResponse.json({error:'Reserva ou token do cartão não informado.'},{status:400});const db=supabaseAdmin();const {data:r,error}=await db.from('reservations').select('id,total,payment_total,payment_method,payment_status,customer_phone,vehicles(name),profiles:customer_id(full_name,cpf),companies:company_id(name,efi_payee_code,efi_split_enabled)').eq('id',reservationId).single();if(error||!r)return NextResponse.json({error:'Reserva não encontrada.'},{status:404});if(r.payment_method!=='card')return NextResponse.json({error:'A reserva não está configurada para cartão.'},{status:400});if(r.payment_status==='paid')return NextResponse.json({error:'Esta reserva já está paga.'},{status:409});const {data:fees}=await db.from('platform_fee_settings').select('card_customer_fee_percent,card_platform_fee_percent').eq('id',true).single();const customerFeePercent=Number(fees?.card_customer_fee_percent||0);const platformPercent=Number(fees?.card_platform_fee_percent||0);const base=Number(r.total||0);const expectedTotal=Number((base*(1+customerFeePercent/100)).toFixed(2));const chargeAmount=Number(r.payment_total||expectedTotal);const companyNet=Number((base*(1-platformPercent/100)).toFixed(2));const platformGross=Number((chargeAmount-companyNet).toFixed(2));const profile:any=r.profiles,vehicle:any=r.vehicles,company:any=r.companies;const name=String(body?.name||profile?.full_name||'').trim();const cpf=String(body?.cpf||profile?.cpf||'').replace(/\D/g,'');const email=String(body?.email||'').trim();const phone=String(body?.phone||r.customer_phone||'').replace(/\D/g,'');if(!name||cpf.length!==11||!email||phone.length<10)return NextResponse.json({error:'Complete nome, CPF, e-mail e telefone do pagador.'},{status:400});const result=await createCardCharge({amount:chargeAmount,paymentToken,name,cpf,email,phone,installments:Math.max(1,Number(body?.installments)||1),description:`Reserva ${vehicle?.name||''} - ${company?.name||'AGENDA-GO'}`,companyPayeeCode:company?.efi_split_enabled?company?.efi_payee_code||undefined:undefined,companyFixedCents:company?.efi_split_enabled&&company?.efi_payee_code?Math.round(companyNet*100):undefined});const status=String(result?.data?.status||'').toLowerCase();const approved=status==='approved'||status==='paid';await db.from('reservations').update({payment_status:approved?'paid':status||'pending',card_charge_id:result?.data?.charge_id?String(result.data.charge_id):null,paid_at:approved?new Date().toISOString():null,platform_fee:Number((base*platformPercent/100).toFixed(2)),platform_net:platformGross,company_net:companyNet}).eq('id',reservationId);await db.from('payments').insert({reservation_id:reservationId,company_id:(r as any).company_id,amount:chargeAmount,method:'card',status:approved?'paid':status||'pending',transaction_id:result?.data?.charge_id?String(result.data.charge_id):null,paid_at:approved?new Date().toISOString():null,platform_fee_amount:platformGross,company_net_amount:companyNet,raw_status:status||null});return NextResponse.json({code:result?.code,status,approved,chargeId:result?.data?.charge_id,total:result?.data?.total,installments:result?.data?.installments,refusal:result?.data?.refusal||null,companyNet,platformGross})}catch(error:any){console.error('Erro Efí Cartão:',error?.message);return NextResponse.json({error:error?.message||'Não foi possível processar o cartão.'},{status:500})}}
