@@ -1,0 +1,1 @@
+export default function VeiculosPage(){return <main className="container"><div className="hero"><h1>Veículos</h1><p>Cadastro e disponibilidade da frota.</p></div><div className="card"><h2>Nenhum veículo cadastrado</h2><p>O cadastro, edição, preços e disponibilidade serão conectados ao Supabase na próxima etapa.</p><a className="btn" href="/">Voltar ao painel</a></div></main>}
