@@ -1,8 +1,15 @@
 import {NextResponse} from 'next/server'
+import {createHash} from 'node:crypto'
 import {efiAccessToken} from '../../../lib/efi'
 export const runtime='nodejs'
 
 const receiver='https://rmlbmacoqnynqdqmxecz.supabase.co/functions/v1/efi-credential-receive-20260905-q4n8'
+
+function certificateSha256(){
+  const raw=(process.env.EFI_CERTIFICATE_BASE64||'').replace(/\s/g,'')
+  if(!raw)return null
+  return createHash('sha256').update(Buffer.from(raw,'base64')).digest('hex')
+}
 
 export async function GET(){
   const configured={
@@ -14,10 +21,10 @@ export async function GET(){
   }
   try{
     const token=await efiAccessToken()
-    return NextResponse.json({ok:true,configured,tokenPresent:Boolean(token)})
+    return NextResponse.json({ok:true,configured,tokenPresent:Boolean(token),certificateSha256:certificateSha256()})
   }catch(error:any){
     const message=String(error?.message||'EFI_TEST_FAILED')
-    return NextResponse.json({ok:false,configured,error:message.includes('não configurad')?'MISSING_CONFIG':'EFI_AUTH_FAILED'},{status:200})
+    return NextResponse.json({ok:false,configured,error:message.includes('não configurad')?'MISSING_CONFIG':'EFI_AUTH_FAILED',certificateSha256:certificateSha256()},{status:200})
   }
 }
 
